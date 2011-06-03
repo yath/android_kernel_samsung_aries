@@ -42,8 +42,8 @@
 #include "wm8994_samsung.h"
 #include "../../../arch/arm/mach-s5pv210/herring.h"
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS
-#include "wm8994_extensions.h"
+#ifdef CONFIG_SND_WM8994_EXT
+#include "wm8994_ext.h"
 #endif
 
 #define WM8994_VERSION "0.1"
@@ -179,8 +179,8 @@ int wm8994_write(struct snd_soc_codec *codec, unsigned int reg,
 	u8 data[4];
 	int ret;
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS
-	value = wm8994_extensions_write(codec, reg, value);
+#ifdef CONFIG_SND_WM8994_EXT
+	value = wm8994_ext_write(codec, reg, value);
 #endif
 
 	/* data is
@@ -527,6 +527,8 @@ static int wm8994_get_codec_status(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static void wm8994_shutdown(struct snd_pcm_substream *substream,
+			    struct snd_soc_dai *codec_dai);
 static int wm8994_set_codec_status(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
@@ -669,6 +671,46 @@ static int wm8994_set_input_source(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+int wm8994_soc_info_int(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_info *uinfo)
+{
+	struct soc_mixer_control *mc =
+		(struct soc_mixer_control *)kcontrol->private_value;
+	int platform_max;
+	unsigned int shift = mc->shift;
+	unsigned int rshift = mc->rshift;
+
+	if (!mc->platform_max)
+		mc->platform_max = mc->max;
+	platform_max = mc->platform_max;
+
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+
+	uinfo->count = shift == rshift ? 1 : 2;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = platform_max;
+	return 0;
+}
+
+int wm8994_soc_info_int_2r(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_info *uinfo)
+{
+	struct soc_mixer_control *mc =
+		(struct soc_mixer_control *)kcontrol->private_value;
+	int platform_max;
+
+	if (!mc->platform_max)
+		mc->platform_max = mc->max;
+	platform_max = mc->platform_max;
+
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+
+	uinfo->count = 2;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = platform_max;
+	return 0;
+}
+
 #define  SOC_WM899X_OUTPGA_DOUBLE_R_TLV(xname, reg_left, reg_right,\
 		xshift, xmax, xinvert, tlv_array) \
 {	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname),\
@@ -691,11 +733,40 @@ static int wm8994_set_input_source(struct snd_kcontrol *kcontrol,
 		.get = snd_soc_get_volsw, .put = wm899x_inpga_put_volsw_vu, \
 		.private_value = SOC_SINGLE_VALUE(reg, shift, max, invert) }
 
+#if 0
+#define  SOC_WM899X_OUT_INT_DOUBLE_R_TLV(xname, name, reg_left, reg_right, \
+		xshift, xmax, xinvert, tlv_array) \
+{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname),\
+	.access = SNDRV_CTL_ELEM_ACCESS_TLV_READ |\
+		 SNDRV_CTL_ELEM_ACCESS_READWRITE,\
+	.tlv.p = (tlv_array), \
+	.info = snd_soc_info_int_2r, \
+	.get = wm8994_get_##name##, .put = wm8994_set_##name##, \
+	.private_value = (unsigned long)&(struct soc_mixer_control) \
+		{.reg = reg_left, .rreg = reg_right, .shift = xshift, \
+		.max = xmax, .invert = xinvert} }
+
+#define SOC_WM899X_OUT_INT_SINGLE_R_TLV(xname, name, reg, shift, max, invert, \
+		tlv_array) {\
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname), \
+		.access = SNDRV_CTL_ELEM_ACCESS_TLV_READ |\
+				SNDRV_CTL_ELEM_ACCESS_READWRITE,\
+		.tlv.p = (tlv_array), \
+		.info = wm8994_soc_info_int, \
+		.get = wm8994_get_##name##, .put = wm899x_set_##name##, \
+		.private_value = SOC_SINGLE_VALUE(reg, shift, max, invert) }
+#endif
+
 static const DECLARE_TLV_DB_SCALE(digital_tlv, -7162, 37, 1);
 static const DECLARE_TLV_DB_LINEAR(digital_tlv_spkr, -5700, 600);
 static const DECLARE_TLV_DB_LINEAR(digital_tlv_rcv, -5700, 600);
 static const DECLARE_TLV_DB_LINEAR(digital_tlv_headphone, -5700, 600);
 static const DECLARE_TLV_DB_LINEAR(digital_tlv_mic, -7162, 7162);
+static const DECLARE_TLV_DB_LINEAR(digital_tlv_amp_level, 0, 62);
+static const DECLARE_TLV_DB_LINEAR(digital_tlv_recording_preset, 0, 4);
+static const DECLARE_TLV_DB_LINEAR(digital_tlv_digital_gain, -71625, 36000);
+static const DECLARE_TLV_DB_LINEAR(digital_tlv_stereo_expansion_gain, 0, 32);
+static const DECLARE_TLV_DB_LINEAR(digital_tlv_headphone_eq_bands_gain, -12, 12);
 
 static const struct soc_enum path_control_enum[] = {
 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(playback_path), playback_path),
@@ -749,6 +820,58 @@ static const struct snd_kcontrol_new wm8994_snd_controls[] = {
 	SOC_ENUM_EXT("Codec Status", path_control_enum[6],
 		wm8994_get_codec_status, wm8994_set_codec_status),
 
+    SOC_SINGLE_BOOL_EXT("Input Oversampling", 0,
+        wm8994_get_input_oversampling, wm8994_set_input_oversampling),
+
+    SOC_SINGLE_BOOL_EXT("Output Oversampling", 0,
+        wm8994_get_output_oversampling, wm8994_set_output_oversampling),
+
+#ifdef NEXUS_S
+    SOC_SINGLE_BOOL_EXT("Speaker Tuning", 0,
+        wm8994_get_speaker_tuning, wm8994_set_speaker_tuning),
+#endif
+
+#ifdef CONFIG_SND_WM8994_EXT_FM
+    SOC_SINGLE_BOOL_EXT("FM Radio Headset Restore Bass", 0,
+        wm8994_get_fm_radio_headset_restore_bass, wm8994_set_fm_radio_headset_restore_bass),
+
+    SOC_SINGLE_BOOL_EXT("FM Radio Headset Restore Highs", 0,
+        wm8994_get_fm_radio_headset_restore_highs, wm8994_set_fm_radio_headset_restore_highs),
+
+    SOC_SINGLE_BOOL_EXT("FM Radio Headset Normalize Gain", 0,
+        wm8994_get_fm_radio_headset_normalize_gain, wm8994_set_fm_radio_headset_normalize_gain),
+#endif
+    SOC_SINGLE_BOOL_EXT("FLL Tuning", 0,
+        wm8994_get_fll_tuning, wm8994_set_fll_tuning),
+
+    SOC_SINGLE_BOOL_EXT("Mono Downmix", 0,
+        wm8994_get_mono_downmix, wm8994_set_mono_downmix),
+
+    SOC_SINGLE_BOOL_EXT("DAC Direct", 0,
+        wm8994_get_dac_direct, wm8994_set_dac_direct),
+
+    SOC_SINGLE_BOOL_EXT("Headphone EQ", 0,
+        wm8994_get_headphone_eq, wm8994_set_headphone_eq),
+
+    SOC_SINGLE_BOOL_EXT("Stereo Expansion", 0,
+        wm8994_get_stereo_expansion, wm8994_set_stereo_expansion),
+
+#if 0
+    SOC_WM899X_OUT_INT_DOUBLE_R_TLV("Headphone Amplifier Level", headphone_amplifier_level,
+                                    WM8994_LEFT_OUTPUT_VOLUME, WM8994_RIGHT_OUTPUT_VOLUME, 0, 62, 0, digital_tlv_amp_level);
+
+    SOC_WM899X_OUT_INT_DOUBLE_R_TLV("Digital Gain", digital_gain,
+                                    WM8994_AIF1_DAC1_LEFT_VOLUME, WM8994_RIGHT_AIF1_DAC1_LEFT_VOLUME, 0, 36000, 0, digital_tlv_digital_gain);
+
+    SOC_WM8994_OUT_INT_SINGLE_R_TLV("Recording Preset", recording_preset,
+                                    WM8994_LEFT_LINE_INPUT_1_2_VOLUME, 0, 4, 0, digital_tlv_recording_preset);
+
+    SOC_WM8994_OUT_INT_SINGLE_R_TLV("Stereo Expansion Gain", stereo_expansion_gain,
+                                    WM8994_AIF1_DAC1_FILTERS_2, 0, 32, 0, digital_tlv_stereo_expansion_gain);
+
+    SOC_WM8994_OUT_INT_SINGLE_R_TLV("Headphone EQ Band 1 A", headphone_eq_band_1_A_value,
+                                    WM8994_AIF1_DAC1_EQ_BAND_1_A, 0, 12, 0, digital_tlv_headphone_eq_bands_gain);
+#endif
 };
 
 /* Add non-DAPM controls */
@@ -3092,8 +3215,63 @@ static int wm8994_init(struct wm8994_priv *wm8994_private,
 	wm8994->gain_code = gain_code_check();
 
 	wm8994->codec_clk = clk_get(NULL, "usb_osc");
+    wm8994->ext.enable = false;
+    wm8994->ext.bypass_write_extension = false;
+    wm8994->ext.debug_log_level = LOG_INFOS;
+#ifdef CONFIG_SND_WM8994_EXT_FM
+    wm8994->ext.fm_radio_headset_restore_bass = true;
+    wm8994->ext.fm_radio_headset_restore_highs = true;
+    wm8994->ext.fm_radio_headset_normalize_gain = true;
+#endif
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
+    wm8994->ext.recording_preset = 1;
+#endif
+#ifdef NEXUS_S
+    wm8994->ext.speaker_tuning = false;
+#endif
+    wm8994->ext.dac_osr128 = true;
+    wm8994->ext.adc_osr128 = false;
+    wm8994->ext.fll_tuning = true;
+    wm8994->ext.dac_direct = true;
+    wm8994->ext.mono_downmix = false;
+    wm8994->ext.digital_gain = 0;
+    wm8994->ext.headphone_eq = false;
+    wm8994->ext.stereo_expansion = false;
+    wm8994->ext.stereo_expansion_gain = 16;
+    wm8994->ext.hp_level[0] = CONFIG_SND_WM8994_EXT_HP_LEVEL;
+    wm8994->ext.hp_level[1] = CONFIG_SND_WM8994_EXT_HP_LEVEL;
+    wm8994->ext.eq_gains[0] = wm8994->ext.eq_gains[1] = wm8994->ext.eq_gains[2] = 
+        wm8994->ext.eq_gains[3] = wm8994->ext.eq_gains[4] = 0;
+    /*
+      eq_band_values[5][4]= {
+      {0x0FCA, 0x0400, 0x00D8},
+      {0x1EB5, 0xF145, 0x0B75, 0x01C5},
+      {0x1C58, 0xF373, 0x0A54, 0x0558},
+      {0x168E, 0xF829, 0x07AD, 0x1103},
+      {0x0564, 0x0559, 0x4000}
+      };
+    */
+    wm8994->ext.eq_band_values[0][0] = 0x0FCA;
+    wm8994->ext.eq_band_values[0][1] = 0x0400;
+    wm8994->ext.eq_band_values[0][2] = 0x00D8;
+    wm8994->ext.eq_band_values[1][0] = 0x1EB5;
+    wm8994->ext.eq_band_values[1][1] = 0xF145;
+    wm8994->ext.eq_band_values[1][2] = 0x0B75;
+    wm8994->ext.eq_band_values[1][3] = 0x01C5;
+    wm8994->ext.eq_band_values[2][0] = 0x1C58;
+    wm8994->ext.eq_band_values[2][1] = 0xF373;
+    wm8994->ext.eq_band_values[2][2] = 0x0A54;
+    wm8994->ext.eq_band_values[2][3] = 0x0558;
+    wm8994->ext.eq_band_values[3][0] = 0x168E;
+    wm8994->ext.eq_band_values[3][1] = 0xF829;
+    wm8994->ext.eq_band_values[3][2] = 0x07AD;
+    wm8994->ext.eq_band_values[3][3] = 0x1103;
+    wm8994->ext.eq_band_values[4][0] = 0x0564;
+    wm8994->ext.eq_band_values[4][1] = 0x0559;
+    wm8994->ext.eq_band_values[4][2] = 0x4000;
 
 	wm8994->universal_clock_control(codec, CODEC_ON);
+
 
 	if (IS_ERR(wm8994->codec_clk)) {
 		pr_err("failed to get MCLK clock from AP\n");
@@ -3214,8 +3392,8 @@ static int wm8994_i2c_probe(struct i2c_client *i2c,
 	control_data1 = i2c;
 
 	ret = wm8994_init(wm8994_priv, pdata);
-#ifdef CONFIG_SND_WM8994_EXTENSIONS
-	wm8994_extensions_pcm_probe(codec);
+#ifdef CONFIG_SND_WM8994_EXT
+	wm8994_ext_pcm_probe(codec);
 #endif
 	if (ret) {
 		dev_err(&i2c->dev, "failed to initialize WM8994\n");

@@ -50,8 +50,8 @@ snd-soc-wm8978-objs := wm8978.o
 snd-soc-wm8988-objs := wm8988.o
 snd-soc-wm8990-objs := wm8990.o
 snd-soc-wm8993-objs := wm8993.o
-ifeq ($(CONFIG_SND_WM8994_EXTENSIONS),y)
-snd-soc-wm8994-objs := wm8994_samsung.o wm8994_herring.o wm8994_extensions.o
+ifeq ($(CONFIG_SND_WM8994_EXT),y)
+snd-soc-wm8994-objs := wm8994_samsung.o wm8994_herring.o wm8994_ext.o
 else
 snd-soc-wm8994-objs := wm8994_samsung.o wm8994_herring.o
 endif

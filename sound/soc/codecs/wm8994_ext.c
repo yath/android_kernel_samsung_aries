@@ -1,5 +1,5 @@
 /*
- * wm8994_extensions.c  --  WM8994 ALSA Soc Audio driver related extensions
+ * wm8994_ext.c  --  WM8994 ALSA Soc Audio driver related extensions
  *
  *  Copyright (C) 2010/11 François SIMOND / twitter & XDA-developers @supercurio
  *
@@ -14,7 +14,7 @@
 #include <linux/delay.h>
 #include <linux/miscdevice.h>
 #include <linux/version.h>
-#include "wm8994_extensions.h"
+#include "wm8994_ext.h"
 
 #ifndef MODULE
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
@@ -30,24 +30,20 @@
 #endif
 #endif
 
-#define SUBJECT "wm8994_extensions.c"
+#define SUBJECT "wm8994_ext.c"
 
+#if 0
 bool bypass_write_extension = false;
 
-short unsigned int debug_log_level = LOG_INFOS;
+short unsigned int debug_log_level = LOG_VERBOSE;
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
-unsigned short hp_level[2] = { CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL,
-			       CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL };;
-#endif
-
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
+#ifdef CONFIG_SND_WM8994_EXT_FM
 bool fm_radio_headset_restore_bass = true;
 bool fm_radio_headset_restore_highs = true;
 bool fm_radio_headset_normalize_gain = true;
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_RECORD_PRESETS
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
 unsigned short recording_preset = 1;
 unsigned short origin_recgain;
 unsigned short origin_recgain_mixer;
@@ -59,34 +55,29 @@ bool speaker_tuning = false;
 
 // global active or kill switch
 bool enable = false;
-
 bool dac_osr128 = true;
 bool adc_osr128 = false;
 bool fll_tuning = true;
 bool dac_direct = true;
 bool mono_downmix = false;
-
-// equalizer
-
 // digital gain value in mili dB
 int digital_gain = 0;
-
-bool headphone_eq = false;
-short eq_gains[5] = { 0, 0, 0, 0, 0 };
-short eq_bands[5] = { 3, 4, 4, 4, 3 };
-char eq_band_coef_names[][2] = { "A", "B", "C", "PG" };
-
-unsigned int eq_band_values[5][4] = {
-	{0x0FCA, 0x0400, 0x00D8},
-	{0x1EB5, 0xF145, 0x0B75, 0x01C5},
-	{0x1C58, 0xF373, 0x0A54, 0x0558},
-	{0x168E, 0xF829, 0x07AD, 0x1103},
-	{0x0564, 0x0559, 0x4000}
-};
-
 // 3D effect
 bool stereo_expansion = false;
 short unsigned int stereo_expansion_gain = 16;
+bool headphone_eq = false;
+
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
+unsigned short hp_level[2] = { CONFIG_SND_WM8994_EXT_HP_LEVEL,
+			       CONFIG_SND_WM8994_EXT_HP_LEVEL };;
+#endif
+
+#endif
+
+// equalizer
+
+short eq_bands[5] = { 3, 4, 4, 4, 3 };
+char eq_band_coef_names[][2] = { "A", "B", "C", "PG" };
 
 // keep here a pointer to the codec structure
 struct snd_soc_codec *codec;
@@ -99,23 +90,25 @@ struct snd_soc_codec *codec;
 
 bool debug_log(short unsigned int level)
 {
-	if (debug_log_level >= level)
+    DECLARE_WM8994(codec);
+	if (wm8994->ext.debug_log_level >= level)
 		return true;
 
 	return false;
 }
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 int hpvol(int channel)
 {
 	int vol;
+    DECLARE_WM8994(codec);
 
-	vol = hp_level[channel];
+	vol = wm8994->ext.hp_level[channel];
 
 	if (is_path_media_or_fm_no_call_no_record()) {
 		// negative digital gain compensation
-		if (digital_gain < 0)
-			vol = (vol - ((digital_gain / 100) + 5) / 10);
+		if (wm8994->ext.digital_gain < 0)
+			vol = (vol - ((wm8994->ext.digital_gain / 100) + 5) / 10);
 
 		if (vol > 62)
 			return 62;
@@ -157,11 +150,11 @@ void update_hpvol(bool with_fade)
 	    || (wm8994->codec_state & CALL_ACTIVE))
 		return;
 
-	bypass_write_extension = true;
+	wm8994->ext.bypass_write_extension = true;
 
 	if (!with_fade) {
 		write_hpvol(hpvol(0), hpvol(1));
-		bypass_write_extension = false;
+		wm8994->ext.bypass_write_extension = false;
 		return;
 	}
 
@@ -171,30 +164,30 @@ void update_hpvol(bool with_fade)
 		val &= ~(WM8994_HPOUT1_VU_MASK);
 		val &= ~(WM8994_HPOUT1L_ZC_MASK);
 		val &= ~(WM8994_HPOUT1L_MUTE_N_MASK);
-		hp_level_old[i] = val + (digital_gain / 1000);
+		hp_level_old[i] = val + (wm8994->ext.digital_gain / 1000);
 
 		if (debug_log(LOG_INFOS))
-			printk("wm8994_extensions: previous hp_level[%hu]: %hu\n",
+			printk("wm8994_ext: previous hp_level[%hu]: %hu\n",
 				i, val);
 	}
 
 	// calculate number of steps for volume fade
-	steps = hp_level[0] - hp_level_old[0];
+	steps = wm8994->ext.hp_level[0] - hp_level_old[0];
 	if (debug_log(LOG_INFOS))
-		printk("wm8994_extensions: volume change steps: %hd "
+		printk("wm8994_ext: volume change steps: %hd "
 		       "start: %hu, end: %hu\n",
 		       steps,
 		       hp_level_old[0],
-		       hp_level[0]);
+		       wm8994->ext.hp_level[0]);
 
 	while (steps != 0) {
-		if (hp_level[0] < hp_level_old[0])
+		if (wm8994->ext.hp_level[0] < hp_level_old[0])
 			steps++;
 		else
 			steps--;
 
 		if (debug_log(LOG_INFOS))
-			printk("wm8994_extensions: volume: %hu\n",
+			printk("wm8994_ext: volume: %hu\n",
 			       (hpvol(0) - steps));
 
 		write_hpvol(hpvol(0) - steps, hpvol(1) - steps);
@@ -203,11 +196,11 @@ void update_hpvol(bool with_fade)
 			udelay(1000);
 	}
 
-	bypass_write_extension = false;
+	wm8994->ext.bypass_write_extension = false;
 }
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
+#ifdef CONFIG_SND_WM8994_EXT_FM
 void update_fm_radio_headset_restore_freqs(bool with_mute)
 {
 	unsigned short val;
@@ -291,20 +284,21 @@ void update_fm_radio_headset_normalize_gain(bool with_mute)
 }
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_RECORD_PRESETS
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
 void update_recording_preset(bool with_mute)
 {
+    DECLARE_WM8994(codec);
 	if (!is_path(MAIN_MICROPHONE))
 		return;
 
-	switch (recording_preset) {
+	switch (wm8994->ext.recording_preset) {
 	case 0:
 		// Original:
 		// On Galaxy S: IN1L_VOL1=11000 (+19.5 dB)
 		// On Nexus S: variable value
 		wm8994_write(codec, WM8994_LEFT_LINE_INPUT_1_2_VOLUME,
-			     WM8994_IN1L_VU | origin_recgain);
-		wm8994_write(codec, WM8994_INPUT_MIXER_3, origin_recgain_mixer);
+			     WM8994_IN1L_VU | wm8994->ext.origin_recgain);
+		wm8994_write(codec, WM8994_INPUT_MIXER_3, wm8994->ext.origin_recgain_mixer);
 		// DRC disabled
 		wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0080);
 		break;
@@ -366,7 +360,7 @@ void update_recording_preset(bool with_mute)
 		break;
 	default:
 		// make sure recording_preset is the default
-		recording_preset = 1;
+		wm8994->ext.recording_preset = 1;
 		// New Balanced: Original - 16.5 dB
 		// IN1L_VOL1=01101 (+27 dB)
 		// +30dB input mixer gain deactivated
@@ -493,7 +487,7 @@ void update_speaker_tuning(bool with_mute)
 	if (!(is_path(SPEAKER) || (wm8994->codec_state & CALL_ACTIVE)))
 		return;
 
-	if (speaker_tuning) {
+	if (wm8994->ext.speaker_tuning) {
 		// DRC settings
 		wm8994_write(codec, WM8994_AIF1_DRC1_3, 0x0010);
 		wm8994_write(codec, WM8994_AIF1_DRC1_4, 0x00EB);
@@ -551,22 +545,17 @@ void update_speaker_tuning(bool with_mute)
 
 unsigned short osr128_get_value(unsigned short val)
 {
-	if (dac_osr128 == 1)
+    DECLARE_WM8994(codec);
+
+	if (wm8994->ext.dac_osr128 == 1)
 		val |= WM8994_DAC_OSR128;
 	else
 		val &= ~WM8994_DAC_OSR128;
 
-	if (adc_osr128 == 1)
+	if (wm8994->ext.adc_osr128 == 1)
 		val |= WM8994_ADC_OSR128;
 	else
 		val &= ~WM8994_ADC_OSR128;
-
-    if (debug_log(LOG_INFOS))
-        printk("wm8994_extensions: %s %s %d\n", 
-               __func__,
-               dac_osr128 ? "dac_osr128" : "", 
-               adc_osr128 ? "adc_osr128" : "", 
-               val);
 
 	return val;
 }
@@ -574,16 +563,19 @@ unsigned short osr128_get_value(unsigned short val)
 void update_osr128(bool with_mute)
 {
 	unsigned short val;
+    DECLARE_WM8994(codec);
+
 	val = osr128_get_value(wm8994_read(codec, WM8994_OVERSAMPLING));
-	bypass_write_extension = true;
+	wm8994->ext.bypass_write_extension = true;
 	wm8994_write(codec, WM8994_OVERSAMPLING, val);
-	bypass_write_extension = false;
+	wm8994->ext.bypass_write_extension = false;
 }
 
 unsigned short fll_tuning_get_value(unsigned short val)
 {
+    DECLARE_WM8994(codec);
 	val = (val >> WM8994_FLL1_GAIN_WIDTH << WM8994_FLL1_GAIN_WIDTH);
-	if (fll_tuning == 1)
+	if (wm8994->ext.fll_tuning == 1)
 		val |= 5;
 
 	return val;
@@ -592,10 +584,11 @@ unsigned short fll_tuning_get_value(unsigned short val)
 void update_fll_tuning(bool with_mute)
 {
 	unsigned short val;
+    DECLARE_WM8994(codec);
 	val = fll_tuning_get_value(wm8994_read(codec, WM8994_FLL1_CONTROL_4));
-	bypass_write_extension = true;
+	wm8994->ext.bypass_write_extension = true;
 	wm8994_write(codec, WM8994_FLL1_CONTROL_4, val);
-	bypass_write_extension = false;
+	wm8994->ext.bypass_write_extension = false;
 }
 
 unsigned short mono_downmix_get_value(unsigned short val, bool can_reverse)
@@ -604,7 +597,9 @@ unsigned short mono_downmix_get_value(unsigned short val, bool can_reverse)
 
 	// Takes care not switching to Stereo on speaker or during a call
 	if (!is_path(SPEAKER) && !(wm8994->codec_state & CALL_ACTIVE)) {
-		if (mono_downmix) {
+        if (debug_log(LOG_VERBOSE))
+            printk("%s: mono_downmix=%d\n", __func__, wm8994->ext.mono_downmix);
+		if (wm8994->ext.mono_downmix) {
 			val |= WM8994_AIF1DAC1_MONO;
 		} else {
 			if (can_reverse)
@@ -618,6 +613,10 @@ unsigned short mono_downmix_get_value(unsigned short val, bool can_reverse)
 void update_mono_downmix(bool with_mute)
 {
 	unsigned short val1, val2, val3;
+    DECLARE_WM8994(codec);
+
+    if (debug_log(LOG_VERBOSE))
+        printk("%s: mono_downmix=%d\n", __func__, wm8994->ext.mono_downmix);
 	val1 = mono_downmix_get_value(wm8994_read
 				      (codec, WM8994_AIF1_DAC1_FILTERS_1),
 				      true);
@@ -628,18 +627,19 @@ void update_mono_downmix(bool with_mute)
 				      (codec, WM8994_AIF2_DAC_FILTERS_1),
 				      true);
 
-	bypass_write_extension = true;
+	wm8994->ext.bypass_write_extension = true;
 	wm8994_write(codec, WM8994_AIF1_DAC1_FILTERS_1, val1);
 	wm8994_write(codec, WM8994_AIF1_DAC2_FILTERS_1, val2);
 	wm8994_write(codec, WM8994_AIF2_DAC_FILTERS_1, val3);
-	bypass_write_extension = false;
+	wm8994->ext.bypass_write_extension = false;
 }
 
 unsigned short dac_direct_get_value(unsigned short val, bool can_reverse)
 {
+    DECLARE_WM8994(codec);
 	if (is_path_media_or_fm_no_call_no_record()) {
 
-		if (dac_direct) {
+		if (wm8994->ext.dac_direct) {
 			if (val == WM8994_DAC1L_TO_MIXOUTL)
 				return WM8994_DAC1L_TO_HPOUT1L;
 		} else {
@@ -655,15 +655,16 @@ unsigned short dac_direct_get_value(unsigned short val, bool can_reverse)
 void update_dac_direct(bool with_mute)
 {
 	unsigned short val1, val2;
+    DECLARE_WM8994(codec);
 	val1 = dac_direct_get_value(wm8994_read(codec,
 						WM8994_OUTPUT_MIXER_1), true);
 	val2 = dac_direct_get_value(wm8994_read(codec,
 						WM8994_OUTPUT_MIXER_2), true);
 
-	bypass_write_extension = true;
+	wm8994->ext.bypass_write_extension = true;
 	wm8994_write(codec, WM8994_OUTPUT_MIXER_1, val1);
 	wm8994_write(codec, WM8994_OUTPUT_MIXER_2, val2);
-	bypass_write_extension = false;
+	wm8994->ext.bypass_write_extension = false;
 }
 
 unsigned short digital_gain_get_value(unsigned short val)
@@ -672,22 +673,23 @@ unsigned short digital_gain_get_value(unsigned short val)
 	int aif_gain = 0xC0;
 	int i;
 	int step = -375;
+    DECLARE_WM8994(codec);
 
 	if (is_path_media_or_fm_no_call_no_record()) {
 
-		if (digital_gain <= 0) {
+		if (wm8994->ext.digital_gain <= 0) {
 			// clear the actual DAC volume for this value
 			val &= ~(WM8994_DAC1R_VOL_MASK);
 
 			// calculation with round
-			i = ((digital_gain * 10 / step) + 5) / 10;
+			i = ((wm8994->ext.digital_gain * 10 / step) + 5) / 10;
 			aif_gain -= i;
 			val |= aif_gain;
 
 			if (debug_log(LOG_INFOS))
-				printk("wm8994_extensions: digital gain: %d mdB, "
+				printk("wm8994_ext: digital gain: %d mdB, "
 				       "steps: %d, real AIF gain: %d mdB\n",
-				digital_gain, i, i * step);
+				wm8994->ext.digital_gain, i, i * step);
 		}
 	}
 
@@ -697,17 +699,18 @@ unsigned short digital_gain_get_value(unsigned short val)
 void update_digital_gain(bool with_mute)
 {
 	unsigned short val1, val2;
+    DECLARE_WM8994(codec);
 	val1 = digital_gain_get_value(wm8994_read(codec,
 						WM8994_AIF1_DAC1_LEFT_VOLUME));
 	val2 = digital_gain_get_value(wm8994_read(codec,
 						WM8994_AIF1_DAC1_RIGHT_VOLUME));
 
-	bypass_write_extension = true;
+	wm8994->ext.bypass_write_extension = true;
 	wm8994_write(codec, WM8994_AIF1_DAC1_LEFT_VOLUME,
 		     WM8994_DAC1_VU | val1);
 	wm8994_write(codec, WM8994_AIF1_DAC1_RIGHT_VOLUME,
 		     WM8994_DAC1_VU | val2);
-	bypass_write_extension = false;
+	wm8994->ext.bypass_write_extension = false;
 }
 
 void update_headphone_eq(bool with_mute)
@@ -718,6 +721,7 @@ void update_headphone_eq(bool with_mute)
 	int j;
 	int k = 0;
 	int first_reg = WM8994_AIF1_DAC1_EQ_BAND_1_A;
+    DECLARE_WM8994(codec);
 
 	if (!is_path_media_or_fm_no_call_no_record()) {
 		// don't apply the EQ
@@ -725,34 +729,34 @@ void update_headphone_eq(bool with_mute)
 	}
 
 	if (debug_log(LOG_INFOS))
-		printk("wm8994_extensions: EQ gains (dB): %hd, %hd, %hd, %hd, %hd\n",
-		        eq_gains[0], eq_gains[1], eq_gains[2],
-		        eq_gains[3], eq_gains[4]);
+		printk("wm8994_ext: EQ gains (dB): %hd, %hd, %hd, %hd, %hd\n",
+               wm8994->ext.eq_gains[0], wm8994->ext.eq_gains[1], wm8994->ext.eq_gains[2],
+               wm8994->ext.eq_gains[3], wm8994->ext.eq_gains[4]);
 
 	gains_1 =
-	    ((eq_gains[0] + 12) << WM8994_AIF1DAC1_EQ_B1_GAIN_SHIFT) |
-	    ((eq_gains[1] + 12) << WM8994_AIF1DAC1_EQ_B2_GAIN_SHIFT) |
-	    ((eq_gains[2] + 12) << WM8994_AIF1DAC1_EQ_B3_GAIN_SHIFT) |
-	    headphone_eq;
+	    ((wm8994->ext.eq_gains[0] + 12) << WM8994_AIF1DAC1_EQ_B1_GAIN_SHIFT) |
+	    ((wm8994->ext.eq_gains[1] + 12) << WM8994_AIF1DAC1_EQ_B2_GAIN_SHIFT) |
+	    ((wm8994->ext.eq_gains[2] + 12) << WM8994_AIF1DAC1_EQ_B3_GAIN_SHIFT) |
+	    wm8994->ext.headphone_eq;
 
 	gains_2 =
-	    ((eq_gains[3] + 12) << WM8994_AIF1DAC1_EQ_B4_GAIN_SHIFT) |
-	    ((eq_gains[4] + 12) << WM8994_AIF1DAC1_EQ_B5_GAIN_SHIFT);
+	    ((wm8994->ext.eq_gains[3] + 12) << WM8994_AIF1DAC1_EQ_B4_GAIN_SHIFT) |
+	    ((wm8994->ext.eq_gains[4] + 12) << WM8994_AIF1DAC1_EQ_B5_GAIN_SHIFT);
 
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_1, gains_1);
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_2, gains_2);
 
 	// don't send EQ configuration if its not enabled
-	if (!headphone_eq)
+	if (!wm8994->ext.headphone_eq)
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(eq_band_values); i++) {
+	for (i = 0; i < ARRAY_SIZE(wm8994->ext.eq_band_values); i++) {
 		if (debug_log(LOG_INFOS))
-			printk("wm8994_extensions: send EQ Band %d\n", i + 1);
+			printk("wm8994_ext: send EQ Band %d\n", i + 1);
 
 		for (j = 0; j < eq_bands[i]; j++) {
 			wm8994_write(codec,
-				     first_reg + k, eq_band_values[i][j]);
+				     first_reg + k, wm8994->ext.eq_band_values[i][j]);
 			k++;
 		}
 	}
@@ -761,14 +765,15 @@ void update_headphone_eq(bool with_mute)
 void update_stereo_expansion(bool with_mute)
 {
 	short unsigned int val;
+    DECLARE_WM8994(codec);
 
 	val = wm8994_read(codec, WM8994_AIF1_DAC1_FILTERS_2);
-	if (stereo_expansion) {
+	if (wm8994->ext.stereo_expansion) {
 		val &= ~(WM8994_AIF1DAC1_3D_GAIN_MASK);
-		val |= (stereo_expansion_gain << WM8994_AIF1DAC1_3D_GAIN_SHIFT);
+		val |= (wm8994->ext.stereo_expansion_gain << WM8994_AIF1DAC1_3D_GAIN_SHIFT);
 	}
 	val &= ~(WM8994_AIF1DAC1_3D_ENA_MASK);
-	val |= (stereo_expansion << WM8994_AIF1DAC1_3D_ENA_SHIFT);
+	val |= (wm8994->ext.stereo_expansion << WM8994_AIF1DAC1_3D_ENA_SHIFT);
 
 	wm8994_write(codec, WM8994_AIF1_DAC1_FILTERS_2, val);
 }
@@ -779,10 +784,11 @@ void load_current_eq_values()
 	int j;
 	int k = 0;
 	int first_reg = WM8994_AIF1_DAC1_EQ_BAND_1_A;
+    DECLARE_WM8994(codec);
 
-	for (i = 0; i < ARRAY_SIZE(eq_band_values); i++)
+	for (i = 0; i < ARRAY_SIZE(wm8994->ext.eq_band_values); i++)
 		for (j = 0; j < eq_bands[i]; j++) {
-			eq_band_values[i][j] =
+			wm8994->ext.eq_band_values[i][j] =
 			    wm8994_read(codec, first_reg + k);
 			k++;
 		}
@@ -794,6 +800,7 @@ void apply_saturation_prevention_drc()
 	unsigned short drc_gain = 0;
 	int i;
 	int step = 750;
+    DECLARE_WM8994(codec);
 
 	// don't apply the limiter if not playing media
 	// (exclude FM radio, it has its own DRC settings)
@@ -803,9 +810,9 @@ void apply_saturation_prevention_drc()
 
 	// don't apply the limiter without stereo_expansion or headphone_eq
 	// or a positive digital gain
-	if (!(stereo_expansion
-	      || headphone_eq
-	      || digital_gain >= 0))
+	if (!(wm8994->ext.stereo_expansion
+	      || wm8994->ext.headphone_eq
+	      || wm8994->ext.digital_gain >= 0))
 		return;
 
 	// configure the DRC to avoid saturation: not actually compress signal
@@ -843,16 +850,16 @@ void apply_saturation_prevention_drc()
 	val = wm8994_read(codec, WM8994_AIF1_DRC1_4);
 	val &= ~(WM8994_AIF1DRC1_KNEE_IP_MASK);
 
-	if (digital_gain >= 0) {
+	if (wm8994->ext.digital_gain >= 0) {
 		// deal with positive digital gains
-		i = ((digital_gain * 10 / step) + 5) / 10;
+		i = ((wm8994->ext.digital_gain * 10 / step) + 5) / 10;
 		drc_gain += i;
 		val |= (drc_gain << WM8994_AIF1DRC1_KNEE_IP_SHIFT);
 
 		if (debug_log(LOG_INFOS))
-			printk("wm8994_extensions: digital gain: %d mdB, "
+			printk("wm8994_ext: digital gain: %d mdB, "
 			       "steps: %d, real DRC gain: %d mdB\n",
-			digital_gain, i, i * step);
+			wm8994->ext.digital_gain, i, i * step);
 
 	}
 	wm8994_write(codec, WM8994_AIF1_DRC1_4, val);
@@ -867,24 +874,27 @@ static ssize_t debug_log_show(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf)
 {
-	return sprintf(buf, "%u\n", debug_log_level);
+    DECLARE_WM8994(codec);
+	return sprintf(buf, "%u\n", wm8994->ext.debug_log_level);
 }
 
 static ssize_t debug_log_store(struct device *dev,
 			       struct device_attribute *attr,
 			       const char *buf, size_t size)
 {
-	sscanf(buf, "%hu", &debug_log_level);
+    DECLARE_WM8994(codec);
+	sscanf(buf, "%hu", &wm8994->ext.debug_log_level);
 	return size;
 }
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 static ssize_t headphone_amplifier_level_show(struct device *dev,
 					      struct device_attribute *attr,
 					      char *buf)
 {
+    DECLARE_WM8994(codec);
 	// output median of left and right headphone amplifier volumes
-	return sprintf(buf, "%u\n", (hp_level[0] + hp_level[1]) / 2);
+	return sprintf(buf, "%u\n", (wm8994->ext.hp_level[0] + wm8994->ext.hp_level[1]) / 2);
 }
 
 static ssize_t headphone_amplifier_level_store(struct device *dev,
@@ -892,6 +902,8 @@ static ssize_t headphone_amplifier_level_store(struct device *dev,
 					       const char *buf, size_t size)
 {
 	unsigned short vol;
+    DECLARE_WM8994(codec);
+
 	if (sscanf(buf, "%hu", &vol) == 1) {
 
 		// hard limit to 62 because 63 introduces distortions
@@ -899,7 +911,7 @@ static ssize_t headphone_amplifier_level_store(struct device *dev,
 			vol = 62;
 
 		// left and right are set to the same volumes by this control
-		hp_level[0] = hp_level[1] = vol;
+		wm8994->ext.hp_level[0] = wm8994->ext.hp_level[1] = vol;
 
 		update_digital_gain(false);
 		update_hpvol(true);
@@ -912,7 +924,8 @@ static ssize_t headphone_amplifier_level_store(struct device *dev,
 static ssize_t name##_show(struct device *dev,				       \
 struct device_attribute *attr, char *buf)				       \
 {									       \
-	return sprintf(buf,"%u\n",(name ? 1 : 0));			       \
+    DECLARE_WM8994(codec); \
+	return sprintf(buf,"%u\n",(wm8994->ext.name ? 1 : 0));			       \
 }
 
 #define DECLARE_BOOL_STORE_UPDATE_WITH_MUTE(name, updater, with_mute)	       \
@@ -920,10 +933,12 @@ static ssize_t name##_store(struct device *dev, struct device_attribute *attr, \
 	const char *buf, size_t size)					       \
 {									       \
 	unsigned short state;						       \
+    DECLARE_WM8994(codec); \
+                                               \
 	if (sscanf(buf, "%hu", &state) == 1) {				       \
-		name = state == 0 ? false : true;			       \
+		wm8994->ext.name = state == 0 ? false : true;			       \
 		if (debug_log(LOG_INFOS))				       \
-			printk("wm8994_extensions: %s: %u\n", #updater, state);     \
+			printk("wm8994_ext: %s: %u\n", #updater, state);     \
 		updater(with_mute);					       \
 	}								       \
 	return size;							       \
@@ -936,7 +951,7 @@ DECLARE_BOOL_STORE_UPDATE_WITH_MUTE(speaker_tuning,
 				    false);
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
+#ifdef CONFIG_SND_WM8994_EXT_FM
 DECLARE_BOOL_SHOW(fm_radio_headset_restore_bass);
 DECLARE_BOOL_STORE_UPDATE_WITH_MUTE(fm_radio_headset_restore_bass,
 				    update_fm_radio_headset_restore_freqs,
@@ -953,11 +968,12 @@ DECLARE_BOOL_STORE_UPDATE_WITH_MUTE(fm_radio_headset_normalize_gain,
 				    false);
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_RECORD_PRESETS
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
 static ssize_t recording_preset_show(struct device *dev,
 				     struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", recording_preset);
+    DECLARE_WM8994(codec);
+	return sprintf(buf, "%d\n", wm8994->ext.recording_preset);
 }
 
 static ssize_t recording_preset_store(struct device *dev,
@@ -965,8 +981,9 @@ static ssize_t recording_preset_store(struct device *dev,
 				      const char *buf, size_t size)
 {
 	unsigned short preset_number;
+    DECLARE_WM8994(codec);
 	if (sscanf(buf, "%hu", &preset_number) == 1) {
-		recording_preset = preset_number;
+		wm8994->ext.recording_preset = preset_number;
 		update_recording_preset(false);
 	}
 	return size;
@@ -1001,7 +1018,8 @@ DECLARE_BOOL_STORE_UPDATE_WITH_MUTE(dac_direct,
 static ssize_t digital_gain_show(struct device *dev,
 				     struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", digital_gain);
+    DECLARE_WM8994(codec);
+	return sprintf(buf, "%d\n", wm8994->ext.digital_gain);
 }
 
 static ssize_t digital_gain_store(struct device *dev,
@@ -1009,20 +1027,21 @@ static ssize_t digital_gain_store(struct device *dev,
 				      const char *buf, size_t size)
 {
 	int new_digital_gain;
+    DECLARE_WM8994(codec);
 	if (sscanf(buf, "%d", &new_digital_gain) == 1) {
 		if (new_digital_gain <= 36000 && new_digital_gain >= -71625) {
-			if (new_digital_gain > digital_gain) {
+			if (new_digital_gain > wm8994->ext.digital_gain) {
 				// reduce analog volume first
-				digital_gain = new_digital_gain;
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+				wm8994->ext.digital_gain = new_digital_gain;
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 				update_hpvol(false);
 #endif
 				update_digital_gain(false);
 			} else {
 				// reduce digital volume first
-				digital_gain = new_digital_gain;
+				wm8994->ext.digital_gain = new_digital_gain;
 				update_digital_gain(false);
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 				update_hpvol(false);
 #endif
 			}
@@ -1042,7 +1061,8 @@ static ssize_t headphone_eq_b##band##_gain_show(struct device *dev,	       \
 					 struct device_attribute *attr,	       \
 					 char *buf)			       \
 {									       \
-	return sprintf(buf, "%d\n", eq_gains[band-1]);			       \
+    DECLARE_WM8994(codec); \
+	return sprintf(buf, "%d\n", wm8994->ext.eq_gains[band-1]);			       \
 }
 
 #define DECLARE_EQ_GAIN_STORE(band)					       \
@@ -1051,9 +1071,10 @@ static ssize_t headphone_eq_b##band##_gain_store(struct device *dev,	       \
 					  const char *buf, size_t size)	       \
 {									       \
 	short new_gain;							       \
+    DECLARE_WM8994(codec); \
 	if (sscanf(buf, "%hd", &new_gain) == 1) {			       \
 		if (new_gain >= -12 && new_gain <= 12) {		       \
-			eq_gains[band-1] = new_gain;			       \
+			wm8994->ext.eq_gains[band-1] = new_gain;			       \
 			update_headphone_eq(false);			       \
 		}							       \
 	}								       \
@@ -1109,6 +1130,7 @@ static ssize_t headphone_eq_bands_values_store(struct device *dev,
 	short unsigned int band;
 	char coef_name[2];
 	unsigned int bytes_read = 0;
+    DECLARE_WM8994(codec);
 
 	while (sscanf(buf, "%hu %s %hx%n",
 		      &band, coef_name, &val, &bytes_read) == 3) {
@@ -1123,19 +1145,20 @@ static ssize_t headphone_eq_bands_values_store(struct device *dev,
 			if (strncmp(eq_band_coef_names[i], coef_name, 2) == 0) {
 				if (eq_bands[band-1] == 3 && i == 3)
 					// deal with high and low shelves
-					eq_band_values[band-1][2] = val;
+					wm8994->ext.eq_band_values[band-1][2] = val;
 				else
 					// parametric bands
-					eq_band_values[band-1][i] = val;
+					wm8994->ext.eq_band_values[band-1][i] = val;
 
 				if (debug_log(LOG_INFOS))
-					printk("wm8994_extensions: read EQ from "
+					printk("wm8994_ext: read EQ from "
 					       "sysfs: EQ Band %hd %s: 0x%04X\n"
 					       , band, coef_name, val);
 				break;
 			}
 		}
 	}
+    update_headphone_eq(false);
 
 	return size;
 }
@@ -1144,12 +1167,12 @@ DECLARE_BOOL_SHOW(stereo_expansion);
 DECLARE_BOOL_STORE_UPDATE_WITH_MUTE(stereo_expansion,
 				    update_stereo_expansion,
 				    false);
-
 static ssize_t stereo_expansion_gain_show(struct device *dev,
 					  struct device_attribute *attr,
 					  char *buf)
 {
-	return sprintf(buf, "%u\n", stereo_expansion_gain);
+    DECLARE_WM8994(codec);
+	return sprintf(buf, "%u\n", wm8994->ext.stereo_expansion_gain);
 }
 
 static ssize_t stereo_expansion_gain_store(struct device *dev,
@@ -1157,17 +1180,18 @@ static ssize_t stereo_expansion_gain_store(struct device *dev,
 					   const char *buf, size_t size)
 {
 	short unsigned val;
+    DECLARE_WM8994(codec);
 
 	if (sscanf(buf, "%hu", &val) == 1)
 		if (val >= 0 && val < 32) {
-			stereo_expansion_gain = val;
+			wm8994->ext.stereo_expansion_gain = val;
 			update_stereo_expansion(false);
 		}
 
 	return size;
 }
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_DEVELOPMENT
+#ifdef CONFIG_SND_WM8994_EXT_DEVELOPMENT
 static ssize_t show_wm8994_register_dump(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
@@ -1256,25 +1280,26 @@ static ssize_t store_wm8994_write(struct device *dev,
 	short unsigned int reg = 0;
 	short unsigned int val = 0;
 	int unsigned bytes_read = 0;
+    DECLARE_WM8994(codec);
 
 	while (sscanf(buf, "%hx %hx%n", &reg, &val, &bytes_read) == 2) {
 		buf += bytes_read;
 		if (debug_log(LOG_INFOS));
-			printk("wm8994_extensions: read from sysfs: %X, %X\n",
+			printk("wm8994_ext: read from sysfs: %X, %X\n",
 			       reg, val);
 
-		bypass_write_extension = true;
+		wm8994->ext.bypass_write_extension = true;
 		wm8994_write(codec, reg, val);
-		bypass_write_extension = false;
+		wm8994->ext.bypass_write_extension = false;
 	}
 	return size;
 }
 #endif
 
-static ssize_t wm8994_extensions_version(struct device *dev,
+static ssize_t wm8994_ext_version(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%u\n", WM8994_EXTENSIONS_VERSION);
+	return sprintf(buf, "%u\n", WM8994_EXT_VERSION);
 }
 
 DECLARE_BOOL_SHOW(enable);
@@ -1284,10 +1309,12 @@ static ssize_t enable_store(struct device *dev,
 {
 	unsigned short state;
 	bool bool_state;
+    DECLARE_WM8994(codec);
+
 	if (sscanf(buf, "%hu", &state) == 1) {
 		bool_state = state == 0 ? false : true;
-		if (state != enable) {
-			enable = bool_state;
+		if (state != wm8994->ext.enable) {
+			wm8994->ext.enable = bool_state;
 			update_enable();
 		}
 	}
@@ -1298,99 +1325,547 @@ static DEVICE_ATTR(debug_log, S_IRUGO | S_IWUGO,
 		   debug_log_show,
 		   debug_log_store);
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 static DEVICE_ATTR(headphone_amplifier_level, S_IRUGO | S_IWUGO,
 		   headphone_amplifier_level_show,
 		   headphone_amplifier_level_store);
+
+int wm8994_get_headphone_amplifier_level(struct snd_kcontrol *kcontrol,
+                                         struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.hp_level[0] + wm8994->ext.hp_level[1];
+}
+
+int wm8994_set_headphone_amplifier_level(struct snd_kcontrol *kcontrol,
+                                         struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	unsigned short vol = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    // hard limit to 62 because 63 introduces distortions
+    if (vol > 62)
+        vol = 62;
+    
+    // left and right are set to the same volumes by this control
+    wm8994->ext.hp_level[0] = wm8994->ext.hp_level[1] = vol;
+    
+    update_digital_gain(false);
+    update_hpvol(true);
+    return 0;
+}
 #endif
 
 #ifdef NEXUS_S
 static DEVICE_ATTR(speaker_tuning, S_IRUGO | S_IWUGO,
 		   speaker_tuning_show,
 		   speaker_tuning_store);
+int wm8994_get_speaker_tuning(struct snd_kcontrol *kcontrol,
+                              struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.speaker_tuning ? 1 : 0;
+}
+int wm8994_set_speaker_tuning(struct snd_kcontrol *kcontrol,
+                              struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.speaker_tuning = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+    update_speaker_tuning(false);
+    return 0;
+}
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
+#ifdef CONFIG_SND_WM8994_EXT_FM
 static DEVICE_ATTR(fm_radio_headset_restore_bass, S_IRUGO | S_IWUGO,
 		   fm_radio_headset_restore_bass_show,
 		   fm_radio_headset_restore_bass_store);
+int wm8994_get_fm_radio_headset_restore_bass(struct snd_kcontrol *kcontrol,
+                                             struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.fm_radio_headset_restore_bass ? 1 : 0;
+}
+int wm8994_set_fm_radio_headset_restore_bass(struct snd_kcontrol *kcontrol,
+                                             struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.fm_radio_restore_bass = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+    update_fm_radio_headset_restore_freqs(true);
+    return 0;
+}
 
 static DEVICE_ATTR(fm_radio_headset_restore_highs, S_IRUGO | S_IWUGO,
 		   fm_radio_headset_restore_highs_show,
 		   fm_radio_headset_restore_highs_store);
+int wm8994_get_fm_radio_headset_restore_highs(struct snd_kcontrol *kcontrol,
+                                              struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.fm_radio_headset_restore_highs ? 1 : 0;
+}
+int wm8994_set_fm_radio_headset_restore_highs(struct snd_kcontrol *kcontrol,
+                                              struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.fm_radio_restore_highs = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+    update_fm_radio_headset_restore_freqs(true);
+    return 0;
+}
 
 static DEVICE_ATTR(fm_radio_headset_normalize_gain, S_IRUGO | S_IWUGO,
 		   fm_radio_headset_normalize_gain_show,
 		   fm_radio_headset_normalize_gain_store);
+int wm8994_get_fm_radio_headset_normalize_gain(struct snd_kcontrol *kcontrol,
+                                               struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.fm_radio_headset_normalize_gain ? 1 : 0;
+}
+int wm8994_set_fm_radio_headset_normlize_gain(struct snd_kcontrol *kcontrol,
+                                              struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.fm_radio_normalize_gain = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+    update_fm_radio_headset_normalize_gain(false);
+    return 0;
+}
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_RECORD_PRESETS
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
 static DEVICE_ATTR(recording_preset, S_IRUGO | S_IWUGO,
 		   recording_preset_show,
 		   recording_preset_store);
+int wm8994_get_recording_preset(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.recording_preset;
+}
+
+int wm8994_set_recording_preset(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	unsigned short preset_number = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+    wm8994->ext.recording_preset = preset_number;
+    update_recording_preset(false);
+    return 0;
+}
 #endif
 
 static DEVICE_ATTR(dac_osr128, S_IRUGO | S_IWUGO,
 		   dac_osr128_show,
 		   dac_osr128_store);
+int wm8994_get_output_oversampling(struct snd_kcontrol *kcontrol,
+                                   struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+
+	return wm8994->ext.dac_osr128;
+}
+int wm8994_set_output_oversampling(struct snd_kcontrol *kcontrol,
+                                   struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+
+	wm8994->ext.dac_osr128 = ucontrol->value.enumerated.item[0];
+	update_osr128(false);
+    return wm8994->ext.dac_osr128;
+}
 
 static DEVICE_ATTR(adc_osr128, S_IRUGO | S_IWUGO,
 		   adc_osr128_show,
 		   adc_osr128_store);
+int wm8994_set_input_oversampling(struct snd_kcontrol *kcontrol,
+                                  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+
+	wm8994->ext.adc_osr128 = ucontrol->value.enumerated.item[0];
+	update_osr128(false);
+
+    return wm8994->ext.adc_osr128;
+}
+int wm8994_get_input_oversampling(struct snd_kcontrol *kcontrol,
+                                  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	return wm8994->ext.adc_osr128;
+}
 
 static DEVICE_ATTR(fll_tuning, S_IRUGO | S_IWUGO,
 		   fll_tuning_show,
 		   fll_tuning_store);
+int wm8994_get_fll_tuning(struct snd_kcontrol *kcontrol,
+                          struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.fll_tuning ? 1 : 0;
+}
+int wm8994_set_fll_tuning(struct snd_kcontrol *kcontrol,
+                          struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.fll_tuning = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+	update_fll_tuning(false);
+    return 0;
+}
 
 static DEVICE_ATTR(dac_direct, S_IRUGO | S_IWUGO,
 		   dac_direct_show,
 		   dac_direct_store);
+int wm8994_get_dac_direct(struct snd_kcontrol *kcontrol,
+                          struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.dac_direct ? 1 : 0;
+}
+int wm8994_set_dac_direct(struct snd_kcontrol *kcontrol,
+                          struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.dac_direct = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+	update_dac_direct(false);
+    return 0;
+}
 
 static DEVICE_ATTR(digital_gain, S_IRUGO | S_IWUGO,
 		   digital_gain_show,
 		   digital_gain_store);
+int wm8994_get_digital_gain(struct snd_kcontrol *kcontrol,
+                            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.digital_gain;
+}
+
+int wm8994_set_digital_gain(struct snd_kcontrol *kcontrol,
+                            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	int new_digital_gain = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (new_digital_gain <= 36000 && new_digital_gain >= -71625) {
+        if (new_digital_gain > wm8994->ext.digital_gain) {
+            // reduce analog volume first
+            wm8994->ext.digital_gain = new_digital_gain;
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
+            update_hpvol(false);
+#endif
+            update_digital_gain(false);
+        } else {
+            // reduce digital volume first
+            wm8994->ext.digital_gain = new_digital_gain;
+            update_digital_gain(false);
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
+            update_hpvol(false);
+#endif
+        }
+    }
+    apply_saturation_prevention_drc();
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq, S_IRUGO | S_IWUGO,
 		   headphone_eq_show,
 		   headphone_eq_store);
+int wm8994_get_headphone_eq(struct snd_kcontrol *kcontrol,
+                            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.headphone_eq ? 1 : 0;
+}
+int wm8994_set_headphone_eq(struct snd_kcontrol *kcontrol,
+                            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.headphone_eq = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+	update_headphone_eq(false);
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq_b1_gain, S_IRUGO | S_IWUGO,
 		   headphone_eq_b1_gain_show,
 		   headphone_eq_b1_gain_store);
+int wm8994_get_headphone_eq_b1_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.eq_gains[0];
+}
+
+int wm8994_set_headphone_eq_b1_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	short new_gain = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (new_gain >= -12 && new_gain <= 12) {
+        wm8994->ext.eq_gains[0] = new_gain;
+        update_headphone_eq(false);
+    }
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq_b2_gain, S_IRUGO | S_IWUGO,
 		   headphone_eq_b2_gain_show,
 		   headphone_eq_b2_gain_store);
+int wm8994_get_headphone_eq_b2_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.eq_gains[1];
+}
+
+int wm8994_set_headphone_eq_b2_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	short new_gain = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (new_gain >= -12 && new_gain <= 12) {
+        wm8994->ext.eq_gains[1] = new_gain;
+        update_headphone_eq(false);
+    }
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq_b3_gain, S_IRUGO | S_IWUGO,
 		   headphone_eq_b3_gain_show,
 		   headphone_eq_b3_gain_store);
+int wm8994_get_headphone_eq_b3_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.eq_gains[2];
+}
+
+int wm8994_set_headphone_eq_b3_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	short new_gain = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (new_gain >= -12 && new_gain <= 12) {
+        wm8994->ext.eq_gains[2] = new_gain;
+        update_headphone_eq(false);
+    }
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq_b4_gain, S_IRUGO | S_IWUGO,
 		   headphone_eq_b4_gain_show,
 		   headphone_eq_b4_gain_store);
+int wm8994_get_headphone_eq_b4_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.eq_gains[3];
+}
+
+int wm8994_set_headphone_eq_b4_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	short new_gain = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (new_gain >= -12 && new_gain <= 12) {
+        wm8994->ext.eq_gains[3] = new_gain;
+        update_headphone_eq(false);
+    }
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq_b5_gain, S_IRUGO | S_IWUGO,
 		   headphone_eq_b5_gain_show,
 		   headphone_eq_b5_gain_store);
+int wm8994_get_headphone_eq_b5_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.eq_gains[4];
+}
+
+int wm8994_set_headphone_eq_b5_gain(struct snd_kcontrol *kcontrol,
+                                    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	short new_gain = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (new_gain >= -12 && new_gain <= 12) {
+        wm8994->ext.eq_gains[4] = new_gain;
+        update_headphone_eq(false);
+    }
+    return 0;
+}
 
 static DEVICE_ATTR(headphone_eq_bands_values, S_IRUGO | S_IWUGO,
 		   headphone_eq_bands_values_show,
 		   headphone_eq_bands_values_store);
+#define DECLARE_HEADPHONE_EQ_BAND_SHOW(name,band,coeff)\
+int wm8884_get_headphone_eq_band_##name##_value(struct snd_kcontrol *kcontrol, \
+                                                struct snd_ctl_elem_value *ucontrol) \
+{ \
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol); \
+    DECLARE_WM8994(codec); \
+    return wm8994->ext.eq_band_values[band][coeff];   \
+}
+
+#define DECLARE_HEADPHONE_EQ_BAND_STORE(name,band,coeff) \
+int wm8994_set_headphone_eq_band_##name##_value(struct snd_kcontrol *kcontrol, \
+                                                struct snd_ctl_elem_value *ucontrol) \
+{ \
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol); \
+	int val = ucontrol->value.integer.value[0]; \
+    DECLARE_WM8994(codec); \
+    wm8994->ext.eq_band_values[band][coeff] = val; \
+    update_headphone_eq(false); \
+    return 0; \
+}
+
+DECLARE_HEADPHONE_EQ_BAND_SHOW(1_A,0,0)
+DECLARE_HEADPHONE_EQ_BAND_STORE(1_A,0,0)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(1_B,0,1)
+DECLARE_HEADPHONE_EQ_BAND_STORE(1_B,0,1)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(1_PG,0,2)
+DECLARE_HEADPHONE_EQ_BAND_STORE(1_PG,0,2)
+
+DECLARE_HEADPHONE_EQ_BAND_SHOW(2_A,1,0)
+DECLARE_HEADPHONE_EQ_BAND_STORE(2_A,1,0)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(2_B,1,1)
+DECLARE_HEADPHONE_EQ_BAND_STORE(2_B,1,1)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(2_C,1,2)
+DECLARE_HEADPHONE_EQ_BAND_STORE(2_C,1,2)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(2_PG,1,3)
+DECLARE_HEADPHONE_EQ_BAND_STORE(2_PG,1,3)
+
+DECLARE_HEADPHONE_EQ_BAND_SHOW(3_A,2,0)
+DECLARE_HEADPHONE_EQ_BAND_STORE(3_A,2,0)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(3_B,2,1)
+DECLARE_HEADPHONE_EQ_BAND_STORE(3_B,2,1)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(3_C,2,2)
+DECLARE_HEADPHONE_EQ_BAND_STORE(3_C,2,2)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(3_PG,2,3)
+DECLARE_HEADPHONE_EQ_BAND_STORE(3_PG,2,3)
+
+DECLARE_HEADPHONE_EQ_BAND_SHOW(4_A,3,0)
+DECLARE_HEADPHONE_EQ_BAND_STORE(4_A,3,0)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(4_B,3,1)
+DECLARE_HEADPHONE_EQ_BAND_STORE(4_B,3,1)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(4_C,3,2)
+DECLARE_HEADPHONE_EQ_BAND_STORE(4_C,3,2)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(4_PG,3,3)
+DECLARE_HEADPHONE_EQ_BAND_STORE(4_PG,3,3)
+
+DECLARE_HEADPHONE_EQ_BAND_SHOW(5_A,4,0)
+DECLARE_HEADPHONE_EQ_BAND_STORE(5_A,4,0)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(5_B,4,1)
+DECLARE_HEADPHONE_EQ_BAND_STORE(5_B,4,1)
+DECLARE_HEADPHONE_EQ_BAND_SHOW(5_PG,4,2)
+DECLARE_HEADPHONE_EQ_BAND_STORE(5_PG,4,2)
 
 static DEVICE_ATTR(stereo_expansion, S_IRUGO | S_IWUGO,
 		   stereo_expansion_show,
 		   stereo_expansion_store);
+int wm8994_get_stereo_expansion(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.stereo_expansion ? 1 : 0;
+}
+int wm8994_set_stereo_expansion(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.stereo_expansion = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+	update_stereo_expansion(false);
+    return 0;
+}
 
 static DEVICE_ATTR(stereo_expansion_gain, S_IRUGO | S_IWUGO,
 		   stereo_expansion_gain_show,
 		   stereo_expansion_gain_store);
+int wm8994_get_stereo_expansion_gain(struct snd_kcontrol *kcontrol,
+                                     struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+
+    return wm8994->ext.stereo_expansion_gain;
+}
+
+int wm8994_set_stereo_expansion_gain(struct snd_kcontrol *kcontrol,
+                                     struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+	int val = ucontrol->value.integer.value[0];
+    DECLARE_WM8994(codec);
+
+    if (val >= 0 && val < 32) {
+        wm8994->ext.stereo_expansion_gain = val;
+        update_stereo_expansion(false);
+    }
+    return 0;
+}
 
 static DEVICE_ATTR(mono_downmix, S_IRUGO | S_IWUGO,
 		   mono_downmix_show,
 		   mono_downmix_store);
+int wm8994_get_mono_downmix(struct snd_kcontrol *kcontrol,
+                            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+    return wm8994->ext.mono_downmix ? 1 : 0;
+}
+int wm8994_set_mono_downmix(struct snd_kcontrol *kcontrol,
+                            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+    DECLARE_WM8994(codec);
+	wm8994->ext.mono_downmix = ucontrol->value.enumerated.item[0] == 0 ? false : true;
+	update_mono_downmix(false);
+    return 0;
+}
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_DEVELOPMENT
+#ifdef CONFIG_SND_WM8994_EXT_DEVELOPMENT
 static DEVICE_ATTR(wm8994_register_dump, S_IRUGO,
 		   show_wm8994_register_dump,
 		   NULL);
@@ -1401,27 +1876,27 @@ static DEVICE_ATTR(wm8994_write, S_IWUSR,
 #endif
 
 static DEVICE_ATTR(version, S_IRUGO,
-		   wm8994_extensions_version,
+		   wm8994_ext_version,
 		   NULL);
 
 static DEVICE_ATTR(enable, S_IRUGO | S_IWUGO,
 		   enable_show,
 		   enable_store);
 
-static struct attribute *wm8994_extensions_attributes[] = {
+static struct attribute *wm8994_ext_attributes[] = {
 	&dev_attr_debug_log.attr,
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 	&dev_attr_headphone_amplifier_level.attr,
 #endif
 #ifdef NEXUS_S
 	&dev_attr_speaker_tuning.attr,
 #endif
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
+#ifdef CONFIG_SND_WM8994_EXT_FM
 	&dev_attr_fm_radio_headset_restore_bass.attr,
 	&dev_attr_fm_radio_headset_restore_highs.attr,
 	&dev_attr_fm_radio_headset_normalize_gain.attr,
 #endif
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_RECORD_PRESETS
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
 	&dev_attr_recording_preset.attr,
 #endif
 	&dev_attr_dac_osr128.attr,
@@ -1439,7 +1914,7 @@ static struct attribute *wm8994_extensions_attributes[] = {
 	&dev_attr_stereo_expansion.attr,
 	&dev_attr_stereo_expansion_gain.attr,
 	&dev_attr_mono_downmix.attr,
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_DEVELOPMENT
+#ifdef CONFIG_SND_WM8994_EXT_DEVELOPMENT
 	&dev_attr_wm8994_register_dump.attr,
 	&dev_attr_wm8994_write.attr,
 #endif
@@ -1447,58 +1922,59 @@ static struct attribute *wm8994_extensions_attributes[] = {
 	NULL
 };
 
-static struct attribute *wm8994_extensions_control_attributes[] = {
+static struct attribute *wm8994_ext_control_attributes[] = {
 	&dev_attr_enable.attr,
 	NULL
 };
 
-static struct attribute_group wm8994_extensions_group = {
-	.attrs = wm8994_extensions_attributes,
+static struct attribute_group wm8994_ext_group = {
+	.attrs = wm8994_ext_attributes,
 };
 
-static struct attribute_group wm8994_extensions_control_group = {
-	.attrs = wm8994_extensions_control_attributes,
+static struct attribute_group wm8994_ext_control_group = {
+	.attrs = wm8994_ext_control_attributes,
 };
 
-static struct miscdevice wm8994_extensions_device = {
+static struct miscdevice wm8994_ext_device = {
 	.minor = MISC_DYNAMIC_MINOR,
-//	.name = "wm8994_extensions",
+//	.name = "wm8994_ext",
 	.name = "voodoo_sound",
 };
 
-static struct miscdevice wm8994_extensions_control_device = {
+static struct miscdevice wm8994_ext_control_device = {
 	.minor = MISC_DYNAMIC_MINOR,
-//	.name = "wm8994_extensions_control",
+//	.name = "wm8994_ext_control",
 	.name = "voodoo_sound_control",
 };
 
-void wm8994_extensions_pcm_remove()
+void wm8994_ext_pcm_remove()
 {
-	printk("wm8994_extensions: removing driver v%d\n", WM8994_EXTENSIONS_VERSION);
-	sysfs_remove_group(&wm8994_extensions_device.this_device->kobj,
-			   &wm8994_extensions_group);
-	misc_deregister(&wm8994_extensions_device);
+	printk("wm8994_ext: removing driver v%d\n", WM8994_EXT_VERSION);
+	sysfs_remove_group(&wm8994_ext_device.this_device->kobj,
+			   &wm8994_ext_group);
+	misc_deregister(&wm8994_ext_device);
 }
 
 void update_enable()
 {
-	if (enable) {
-		printk("wm8994_extensions: initializing driver v%d\n",
-		       WM8994_EXTENSIONS_VERSION);
+    DECLARE_WM8994(codec);
+	if (wm8994->ext.enable) {
+		printk("wm8994_ext: initializing driver v%d\n",
+		       WM8994_EXT_VERSION);
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_DEVELOPMENT
-		printk("wm8994_extensions: codec development tools enabled\n");
+#ifdef CONFIG_SND_WM8994_EXT_DEVELOPMENT
+		printk("wm8994_ext: codec development tools enabled\n");
 #endif
 
-		misc_register(&wm8994_extensions_device);
-		if (sysfs_create_group(&wm8994_extensions_device.this_device->kobj,
-				       &wm8994_extensions_group) < 0) {
+		misc_register(&wm8994_ext_device);
+		if (sysfs_create_group(&wm8994_ext_device.this_device->kobj,
+				       &wm8994_ext_group) < 0) {
 			printk("%s sysfs_create_group fail\n", __FUNCTION__);
 			pr_err("Failed to create sysfs group for (%s)!\n",
-			       wm8994_extensions_device.name);
+			       wm8994_ext_device.name);
 		}
 	} else
-		wm8994_extensions_pcm_remove();
+		wm8994_ext_pcm_remove();
 }
 
 /*
@@ -1507,8 +1983,8 @@ void update_enable()
  *
  */
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
-void wm8994_extensions_fmradio_headset()
+#ifdef CONFIG_SND_WM8994_EXT_FM
+void wm8994_ext_fmradio_headset()
 {
 	// global kill switch
 	if (!enable)
@@ -1524,51 +2000,53 @@ void wm8994_extensions_fmradio_headset()
 }
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_RECORD_PRESETS
-void wm8994_extensions_record_main_mic()
+#ifdef CONFIG_SND_WM8994_EXT_RECORD_PRESETS
+void wm8994_ext_record_main_mic()
 {
+    DECLARE_WM8994(codec);
 	// global kill switch
-	if (!enable)
+	if (!wm8994->ext.enable)
 		return;
 
-	if (recording_preset == 0)
+	if (wm8994->ext.recording_preset == 0)
 		return;
 
-	origin_recgain = wm8994_read(codec, WM8994_LEFT_LINE_INPUT_1_2_VOLUME);
-	origin_recgain_mixer = wm8994_read(codec, WM8994_INPUT_MIXER_3);
+	wm8994->ext.origin_recgain = wm8994_read(codec, WM8994_LEFT_LINE_INPUT_1_2_VOLUME);
+	wm8994->ext.origin_recgain_mixer = wm8994_read(codec, WM8994_INPUT_MIXER_3);
 	update_recording_preset(false);
 }
 #endif
 
 #ifdef NEXUS_S
-void wm8994_extensions_playback_speaker()
+void wm8994_ext_playback_speaker()
 {
+    DECLARE_WM8994(codec);
 	// global kill switch
-	if (!enable)
+	if (!wm8994->ext.enable)
 		return;
-	if (!speaker_tuning)
+	if (!wm8994->ext.speaker_tuning)
 		return;
 
 	update_speaker_tuning(false);
 }
 #endif
 
-unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
+unsigned int wm8994_ext_write(struct snd_soc_codec *codec_,
 				      unsigned int reg, unsigned int value)
 {
 	DECLARE_WM8994(codec_);
 
 	// global kill switch
-	if (!enable)
+	if (!wm8994->ext.enable)
 		return value;
 
 	// modify some registers before those being written to the codec
 	// be sure our pointer to codec is up to date
 	codec = codec_;
 
-	if (!bypass_write_extension) {
+	if (!wm8994->ext.bypass_write_extension) {
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_HP_LEVEL_CONTROL
+#ifdef CONFIG_SND_WM8994_EXT_HP_LEVEL_CONTROL
 		if (is_path(HEADPHONES)
 		    && !(wm8994->codec_state & CALL_ACTIVE)) {
 
@@ -1586,13 +2064,13 @@ unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
 		}
 #endif
 
-#ifdef CONFIG_SND_WM8994_EXTENSIONS_FM
+#ifdef CONFIG_SND_WM8994_EXT_FM
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
 		// FM tuning virtual hook for Gingerbread
 		if (is_path(RADIO_HEADPHONES)) {
 			if (reg == WM8994_AIF2_DRC_1
 			    || reg == WM8994_AIF2_DAC_FILTERS_1)
-				wm8994_extensions_fmradio_headset();
+				wm8994_ext_fmradio_headset();
 		}
 #else
 		// FM tuning virtual hook for Froyo
@@ -1600,7 +2078,7 @@ unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
 			if (reg == WM8994_INPUT_MIXER_2
 			    || reg == WM8994_AIF2_DRC_1
 			    || reg == WM8994_ANALOGUE_HP_1)
-				wm8994_extensions_fmradio_headset();
+				wm8994_ext_fmradio_headset();
 		}
 #endif
 #endif
@@ -1632,18 +2110,18 @@ unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
 		if (reg == WM8994_AIF1_DAC1_FILTERS_1
 		    || reg == WM8994_AIF1_DAC2_FILTERS_1
 		    || reg == WM8994_AIF2_DAC_FILTERS_1) {
-			bypass_write_extension = true;
+			wm8994->ext.bypass_write_extension = true;
 			apply_saturation_prevention_drc();
 			update_headphone_eq(false);
 			update_stereo_expansion(false);
-			bypass_write_extension = false;
+			wm8994->ext.bypass_write_extension = false;
 		}
 
 	}
 	if (debug_log(LOG_VERBOSE))
 	// log every write to dmesg
 #ifdef NEXUS_S
-		printk("wm8994_extensions: codec_state=%u, stream_state=%u, "
+		printk("wm8994_ext: codec_state=%u, stream_state=%u, "
 		       "cur_path=%i, rec_path=%i, "
 		       "power_state=%i\n",
 		       wm8994->codec_state, wm8994->stream_state,
@@ -1651,7 +2129,7 @@ unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
 		       wm8994->power_state);
 #else
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
-		printk("wm8994_extensions: wm8994_write 0x%03X 0x%04X "
+		printk("wm8994_ext: wm8994_write 0x%03X 0x%04X "
 		       "codec_state=%u, stream_state=%u, "
 		       "cur_path=%i, rec_path=%i, "
 #ifndef M110S
@@ -1674,7 +2152,7 @@ unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
 #endif
 		       wm8994->power_state);
 #else
-		printk("wm8994_extensions: wm8994_write 0x%03X 0x%04X "
+		printk("wm8994_ext: wm8994_write 0x%03X 0x%04X "
 		       "codec_state=%u, stream_state=%u, "
 		       "cur_path=%i, rec_path=%i, "
 #ifndef M110S
@@ -1712,22 +2190,24 @@ unsigned int wm8994_extensions_write(struct snd_soc_codec *codec_,
 	return value;
 }
 
-void wm8994_extensions_pcm_probe(struct snd_soc_codec *codec_)
+void wm8994_ext_pcm_probe(struct snd_soc_codec *codec_)
 {
-	enable = true;
-	update_enable();
-
-	misc_register(&wm8994_extensions_control_device);
-	if (sysfs_create_group(&wm8994_extensions_control_device.this_device->kobj,
-			       &wm8994_extensions_control_group) < 0) {
-		printk("%s sysfs_create_group fail\n", __FUNCTION__);
-		pr_err("Failed to create sysfs group for device (%s)!\n",
-		       wm8994_extensions_control_device.name);
-	}
+    DECLARE_WM8994(codec_);
 
 	// make a copy of the codec pointer
 	codec = codec_;
 
+	misc_register(&wm8994_ext_control_device);
+	if (sysfs_create_group(&wm8994_ext_control_device.this_device->kobj,
+			       &wm8994_ext_control_group) < 0) {
+		printk("%s sysfs_create_group fail\n", __FUNCTION__);
+		pr_err("Failed to create sysfs group for device (%s)!\n",
+		       wm8994_ext_control_device.name);
+	}
+
 	// initialize eq_band_values[] from default codec EQ values
 	load_current_eq_values();
+
+	wm8994->ext.enable = true;
+	update_enable();
 }
